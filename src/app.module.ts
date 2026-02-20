@@ -9,10 +9,15 @@ import { User } from './users/user.entity';
 import { Role } from './roles/role.entity';
 import { UserZoneAssignment } from './users/user-zone-assignment.entity';
 import { HealthController } from './common/health.controller';
+import { appConfig, dbConfig, redisConfig, validate } from './config';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [appConfig, dbConfig, redisConfig],
+      validate,
+    }),
     TypeOrmModule.forRoot({
       type: 'postgres',
       url: process.env.DATABASE_URL || 'postgresql://campuscast:campuscast@localhost:5432/auth_db',

@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { UserZoneAssignment } from '../users/user-zone-assignment.entity';
 import * as bcrypt from 'bcrypt';
-import * as jwt from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 
 @Injectable()
 export class AuthService {
@@ -25,14 +25,19 @@ export class AuthService {
     const roles = user.roles.map(r => r.name);
 
     const secret = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+    const expiresInSec = parseInt(process.env.JWT_EXPIRY_SECONDS || '3600', 10);
     const access_token = jwt.sign(
       { sub: user.id, email: user.email, roles, zone_ids, mfa_verified: !user.mfa_enabled },
       secret,
-      { expiresIn: process.env.JWT_EXPIRY || '1h' },
+      { expiresIn: expiresInSec },
     );
-    const refresh_token = jwt.sign({ sub: user.id, type: 'refresh' }, secret, { expiresIn: '7d' });
+    const refresh_token = jwt.sign(
+      { sub: user.id, type: 'refresh' },
+      secret,
+      { expiresIn: 7 * 24 * 3600 },
+    );
 
-    return { access_token, refresh_token, expires_in: 3600 };
+    return { access_token, refresh_token, expires_in: expiresInSec };
   }
 
   async validateToken(token: string) {
