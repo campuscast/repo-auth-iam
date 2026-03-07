@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MetricsModule } from '@campuscast/shared-libs';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -29,6 +30,7 @@ import { appConfig, dbConfig, redisConfig, validate } from './config';
     UsersModule,
     RolesModule,
     DeviceAuthModule,
+      MetricsModule,
   ],
   controllers: [HealthController],
 })

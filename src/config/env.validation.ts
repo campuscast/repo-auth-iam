@@ -30,6 +30,26 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   JWT_SECRET?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ROOT_ENABLED?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ROOT_EMAIL?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ROOT_PASSWORD?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ROOT_ROLE?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ROOT_RESET_PASSWORD?: string;
 }
 
 export function validate(config: Record<string, unknown>) {

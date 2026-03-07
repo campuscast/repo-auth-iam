@@ -14,10 +14,7 @@ export class AuthController {
   @Post('refresh')
   @HttpCode(200)
   async refresh(@Body() body: { refresh_token: string }) {
-    const result = await this.authService.validateToken(body.refresh_token);
-    if (!result.valid) throw new Error('Invalid refresh token');
-    // Stub: issue new tokens
-    return { access_token: 'new.access.token', refresh_token: 'new.refresh.token', expires_in: 3600 };
+    return this.authService.refresh(body.refresh_token);
   }
 
   @Post('validate')
