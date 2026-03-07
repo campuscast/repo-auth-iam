@@ -1,16 +1,21 @@
 FROM node:22-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
+WORKDIR /workspace
+
+COPY repo-shared-libs ./repo-shared-libs
+RUN cd repo-shared-libs && npm ci && npm run build && SHARED_LIBS_TGZ="$(npm pack | tail -n 1)" && mv "$SHARED_LIBS_TGZ" /workspace/shared-libs.tgz
+
+WORKDIR /workspace/repo-auth-iam
+COPY repo-auth-iam/package*.json ./
+RUN npm ci && npm install --no-save /workspace/shared-libs.tgz && test ! -L node_modules/@campuscast/shared-libs
+COPY repo-auth-iam/. ./
 RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
 RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -s /bin/sh -D appuser
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
+COPY --from=builder /workspace/repo-auth-iam/dist ./dist
+COPY --from=builder /workspace/repo-auth-iam/node_modules ./node_modules
+COPY --from=builder /workspace/repo-auth-iam/package.json ./
 USER appuser
-EXPOSE ${PORT:-3000}
+EXPOSE 3000
 CMD ["node", "dist/main.js"]
