@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { Role } from '../roles/role.entity';
 import { User } from '../users/user.entity';
+import { SystemSetting } from '../system/system-setting.entity';
 
 @Injectable()
 export class BootstrapRootUserService implements OnApplicationBootstrap {
@@ -12,9 +13,13 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Role) private readonly roleRepo: Repository<Role>,
+    @InjectRepository(SystemSetting) private readonly settingRepo: Repository<SystemSetting>,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // Seed default roles if they don't exist
+    await this.seedDefaultRoles();
+
     const enabled = this.parseBoolean(
       process.env.AUTH_BOOTSTRAP_ROOT_ENABLED ?? process.env.AUTH_BOOTSTRAP_ADMIN_ENABLED,
       false,
@@ -84,10 +89,14 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
       const created = this.userRepo.create({
         email: rootLogin,
         password_hash,
+        name: 'System Administrator',
+        status: 'active',
+        must_change_password: true,
         mfa_enabled: false,
         roles: [role],
       });
       await this.userRepo.save(created);
+      await this.markInitialized();
       this.logger.warn(`Bootstrap admin user created: "${rootLogin}". Change password after first login.`);
       return;
     }
@@ -108,10 +117,54 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
     if (changed) {
       await this.userRepo.save(user);
       this.logger.warn(`Bootstrap admin user updated: "${rootLogin}"`);
-      return;
+    } else {
+      this.logger.log(`Bootstrap admin user already exists: "${rootLogin}"`);
     }
 
-    this.logger.log(`Bootstrap admin user already exists: "${rootLogin}"`);
+    await this.markInitialized();
+  }
+
+  private async markInitialized(): Promise<void> {
+    const key = 'system.initialized';
+    const existing = await this.settingRepo.findOne({ where: { key } });
+    if (!existing) {
+      await this.settingRepo.save({ key, value: 'true' });
+    }
+  }
+
+  private async seedDefaultRoles(): Promise<void> {
+    const defaultRoles: { name: string; permissions: string[] }[] = [
+      { name: 'super_admin', permissions: ['*'] },
+      { name: 'admin', permissions: ['*'] },
+      {
+        name: 'operator',
+        permissions: [
+          'users.read',
+          'schedules.read', 'schedules.write', 'schedules.publish',
+          'devices.read', 'devices.write',
+          'content.read', 'content.write',
+          'audit.read',
+        ],
+      },
+      {
+        name: 'viewer',
+        permissions: [
+          'users.read',
+          'schedules.read',
+          'devices.read',
+          'content.read',
+          'audit.read',
+        ],
+      },
+    ];
+
+    for (const def of defaultRoles) {
+      const exists = await this.roleRepo.findOne({ where: { name: def.name } });
+      if (!exists) {
+        await this.roleRepo.save(this.roleRepo.create(def));
+        this.logger.log(`Seeded default role "${def.name}"`);
+      }
+    }
   }
 
   private parseBoolean(value: string | undefined, defaultValue: boolean): boolean {

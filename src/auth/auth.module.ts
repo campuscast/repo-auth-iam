@@ -5,9 +5,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/user.entity';
 import { UserZoneAssignment } from '../users/user-zone-assignment.entity';
 import { Role } from '../roles/role.entity';
+import { SystemSetting } from '../system/system-setting.entity';
 import { BootstrapRootUserService } from './bootstrap-root-user.service';
+
 @Module({
-  imports: [TypeOrmModule.forFeature([User, UserZoneAssignment, Role])],
+  imports: [TypeOrmModule.forFeature([User, UserZoneAssignment, Role, SystemSetting])],
   providers: [AuthService, BootstrapRootUserService],
   controllers: [AuthController],
   exports: [AuthService],

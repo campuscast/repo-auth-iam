@@ -4,15 +4,17 @@ import { DataSource } from 'typeorm';
 import { User } from '../users/user.entity';
 import { Role } from '../roles/role.entity';
 import { UserZoneAssignment } from '../users/user-zone-assignment.entity';
+import { SystemSetting } from '../system/system-setting.entity';
 import { Init1700000000000 } from '../migrations/1700000000000-Init';
+import { IamExtensions1700000000001 } from '../migrations/1700000000001-IamExtensions';
 
 const dataSource = new DataSource({
   type: 'postgres',
   url:
     process.env.DATABASE_URL ||
     'postgresql://campuscast:campuscast@localhost:5432/auth_db',
-  entities: [User, Role, UserZoneAssignment],
-  migrations: [Init1700000000000],
+  entities: [User, Role, UserZoneAssignment, SystemSetting],
+  migrations: [Init1700000000000, IamExtensions1700000000001],
 });
 
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
@@ -29,6 +31,38 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+async function seedDefaultRoles(roleRepo: ReturnType<DataSource['getRepository']>) {
+  const defaults = [
+    { name: 'super_admin', permissions: ['*'] },
+    { name: 'admin', permissions: ['*'] },
+    {
+      name: 'operator',
+      permissions: [
+        'users.read',
+        'schedules.read', 'schedules.write', 'schedules.publish',
+        'devices.read', 'devices.write',
+        'content.read', 'content.write',
+        'audit.read',
+      ],
+    },
+    {
+      name: 'viewer',
+      permissions: [
+        'users.read', 'schedules.read', 'devices.read',
+        'content.read', 'audit.read',
+      ],
+    },
+  ];
+
+  for (const def of defaults) {
+    const exists = await roleRepo.findOne({ where: { name: def.name } });
+    if (!exists) {
+      await roleRepo.save(roleRepo.create(def));
+      console.log(`[bootstrap-admin] Seeded role "${def.name}"`);
+    }
+  }
 }
 
 async function main() {
@@ -53,6 +87,10 @@ async function main() {
 
   const userRepo = dataSource.getRepository(User);
   const roleRepo = dataSource.getRepository(Role);
+  const settingRepo = dataSource.getRepository(SystemSetting);
+
+  // Seed default roles
+  await seedDefaultRoles(roleRepo);
 
   let role = await roleRepo.findOne({ where: { name: adminRole } });
   if (!role) {
@@ -60,6 +98,9 @@ async function main() {
     role = await roleRepo.save(role);
     console.log(`[bootstrap-admin] Created role "${adminRole}"`);
   }
+
+  // Check init state
+  const initSetting = await settingRepo.findOne({ where: { key: 'system.initialized' } });
 
   const user = await userRepo.findOne({
     where: { email: adminEmail },
@@ -73,9 +114,9 @@ async function main() {
     .getCount();
 
   if (!user) {
-    if (existingAdminsCount > 0) {
+    if (initSetting?.value === 'true' && existingAdminsCount > 0) {
       throw new Error(
-        `Refusing bootstrap: role "${adminRole}" already assigned to another user. ` +
+        `Refusing bootstrap: system is already initialized and role "${adminRole}" is already assigned. ` +
           'Duplicate super-admin bootstrap is blocked.',
       );
     }
@@ -84,10 +125,19 @@ async function main() {
     const created = userRepo.create({
       email: adminEmail,
       password_hash: passwordHash,
+      name: 'System Administrator',
+      status: 'active',
+      must_change_password: true,
       mfa_enabled: false,
       roles: [role],
     });
     await userRepo.save(created);
+
+    // Mark system as initialized
+    if (!initSetting) {
+      await settingRepo.save({ key: 'system.initialized', value: 'true' });
+    }
+
     console.log(`[bootstrap-admin] Created first administrator "${adminEmail}"`);
     return;
   }
@@ -108,16 +158,21 @@ async function main() {
 
   if (resetPassword) {
     user.password_hash = await bcrypt.hash(adminPassword, 10);
+    user.must_change_password = true;
     changed = true;
   }
 
   if (changed) {
     await userRepo.save(user);
     console.log(`[bootstrap-admin] Updated administrator "${adminEmail}"`);
-    return;
+  } else {
+    console.log(`[bootstrap-admin] Administrator "${adminEmail}" already bootstrapped`);
   }
 
-  console.log(`[bootstrap-admin] Administrator "${adminEmail}" already bootstrapped`);
+  // Ensure initialized flag
+  if (!initSetting) {
+    await settingRepo.save({ key: 'system.initialized', value: 'true' });
+  }
 }
 
 main()

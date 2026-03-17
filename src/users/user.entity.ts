@@ -9,8 +9,17 @@ export class User {
   @Column({ unique: true })
   email: string;
 
+  @Column({ nullable: true })
+  name: string;
+
   @Column()
   password_hash: string;
+
+  @Column({ default: 'active' })
+  status: string; // 'active' | 'inactive'
+
+  @Column({ default: false })
+  must_change_password: boolean;
 
   @Column({ default: false })
   mfa_enabled: boolean;
