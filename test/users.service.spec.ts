@@ -88,7 +88,7 @@ describe('UsersService', () => {
     it('should create a user with valid data', async () => {
       userRepo.findOne.mockResolvedValue(null); // no duplicate
       const result = await service.create(
-        { email: 'new@test.com', password: 'password123' },
+        { email: 'new@test.com', password: 'Password123!' },
         'actor-1',
       );
       expect(result.email).toBe('new@test.com');
@@ -98,7 +98,7 @@ describe('UsersService', () => {
 
     it('should reject empty email', async () => {
       await expect(
-        service.create({ email: '', password: 'password123' }, 'actor-1'),
+        service.create({ email: '', password: 'Password123!' }, 'actor-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -111,7 +111,7 @@ describe('UsersService', () => {
     it('should reject duplicate email', async () => {
       userRepo.findOne.mockResolvedValue(mockUser());
       await expect(
-        service.create({ email: 'test@example.com', password: 'password123' }, 'actor-1'),
+        service.create({ email: 'test@example.com', password: 'Password123!' }, 'actor-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -120,7 +120,7 @@ describe('UsersService', () => {
       roleRepo.findByIds.mockResolvedValue([mockRole()]);
       await expect(
         service.create(
-          { email: 'a@b.com', password: 'password123', role_ids: ['role-1', 'bad-id'] },
+          { email: 'a@b.com', password: 'Password123!', role_ids: ['role-1', 'bad-id'] },
           'actor-1',
         ),
       ).rejects.toThrow(BadRequestException);
@@ -130,10 +130,7 @@ describe('UsersService', () => {
       userRepo.findOne.mockResolvedValue(null);
       const role = mockRole();
       roleRepo.findByIds.mockResolvedValue([role]);
-      const result = await service.create(
-        { email: 'a@b.com', password: 'password123', role_ids: ['role-1'] },
-        'actor-1',
-      );
+      const result = await service.create({ email: 'a@b.com', password: 'Password123!', role_ids: ['role-1'] }, 'actor-1');
       expect(userRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ roles: [role] }),
       );

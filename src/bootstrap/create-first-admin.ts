@@ -7,6 +7,7 @@ import { UserZoneAssignment } from '../users/user-zone-assignment.entity';
 import { SystemSetting } from '../system/system-setting.entity';
 import { Init1700000000000 } from '../migrations/1700000000000-Init';
 import { IamExtensions1700000000001 } from '../migrations/1700000000001-IamExtensions';
+import { validatePasswordPolicy, MIN_PASSWORD_LENGTH } from '../auth/password-policy';
 
 const dataSource = new DataSource({
   type: 'postgres',
@@ -80,6 +81,14 @@ async function main() {
 
   if (adminEmail === 'root' && adminPassword === 'admin') {
     throw new Error('Insecure credentials root/admin are not allowed for admin bootstrap');
+  }
+
+  const passwordPolicyIssues = validatePasswordPolicy(adminPassword);
+  if (passwordPolicyIssues.length > 0) {
+    throw new Error(
+      `Password policy violation for AUTH_BOOTSTRAP_ADMIN_PASSWORD (min length ${MIN_PASSWORD_LENGTH}, uppercase, lowercase, digit, special character required): ` +
+        passwordPolicyIssues.join('; '),
+    );
   }
 
   await dataSource.initialize();

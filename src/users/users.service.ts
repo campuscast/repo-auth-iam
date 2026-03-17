@@ -6,6 +6,7 @@ import { User } from './user.entity';
 import { Role } from '../roles/role.entity';
 import { UserZoneAssignment } from './user-zone-assignment.entity';
 import { AuditClient } from '@campuscast/shared-libs';
+import { assertPasswordPolicy } from '../auth/password-policy';
 
 export interface CreateUserDto {
   email: string;
@@ -85,9 +86,7 @@ export class UsersService {
 
   async create(dto: CreateUserDto, actorId: string) {
     if (!dto.email?.trim()) throw new BadRequestException('Email is required');
-    if (!dto.password || dto.password.length < 8) {
-      throw new BadRequestException('Password must be at least 8 characters');
-    }
+    assertPasswordPolicy(dto.password, 'Password');
 
     const existing = await this.userRepo.findOne({ where: { email: dto.email.trim() } });
     if (existing) throw new BadRequestException('User with this email already exists');

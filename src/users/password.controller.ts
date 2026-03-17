@@ -10,6 +10,7 @@ import { RequirePermissions } from '../common/require-permissions.decorator';
 import { PermissionsGuard } from '../common/permissions.guard';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { assertPasswordPolicy } from '../auth/password-policy';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -30,9 +31,7 @@ export class PasswordController {
     if (!body.current_password || !body.new_password) {
       throw new BadRequestException('Both current_password and new_password are required');
     }
-    if (body.new_password.length < 8) {
-      throw new BadRequestException('New password must be at least 8 characters');
-    }
+    assertPasswordPolicy(body.new_password, 'New password');
 
     const user = await this.userRepo.findOne({ where: { id: actor.sub } });
     if (!user) throw new UnauthorizedException('User not found');
@@ -68,9 +67,7 @@ export class PasswordController {
     if (!user) throw new NotFoundException('User not found');
 
     const tempPassword = body.temporary_password || crypto.randomBytes(12).toString('base64url');
-    if (tempPassword.length < 8) {
-      throw new BadRequestException('Temporary password must be at least 8 characters');
-    }
+    assertPasswordPolicy(tempPassword, 'Temporary password');
 
     user.password_hash = await bcrypt.hash(tempPassword, 10);
     user.must_change_password = true;

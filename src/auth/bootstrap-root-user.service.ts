@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Role } from '../roles/role.entity';
 import { User } from '../users/user.entity';
 import { SystemSetting } from '../system/system-setting.entity';
+import { validatePasswordPolicy, MIN_PASSWORD_LENGTH } from './password-policy';
 
 @Injectable()
 export class BootstrapRootUserService implements OnApplicationBootstrap {
@@ -61,6 +62,15 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
       this.logger.error(
         'Insecure default credentials (root/admin) are not allowed. ' +
           'Set AUTH_BOOTSTRAP_ADMIN_EMAIL and AUTH_BOOTSTRAP_ADMIN_PASSWORD to secure values.',
+      );
+      return;
+    }
+
+    const policyIssues = validatePasswordPolicy(rootPassword);
+    if (policyIssues.length > 0) {
+      this.logger.error(
+        `Bootstrap admin password does not meet password policy (min length ${MIN_PASSWORD_LENGTH}, uppercase, lowercase, digit, special character required). ` +
+          `Issues: ${policyIssues.join('; ')}`,
       );
       return;
     }
