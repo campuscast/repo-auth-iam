@@ -9,8 +9,12 @@ import { DeviceAuthModule } from './device-auth/device-auth.module';
 import { User } from './users/user.entity';
 import { Role } from './roles/role.entity';
 import { UserZoneAssignment } from './users/user-zone-assignment.entity';
+import { Init1700000000000 } from './migrations/1700000000000-Init';
 import { HealthController } from './common/health.controller';
 import { appConfig, dbConfig, redisConfig, validate } from './config';
+
+const dbSynchronize = process.env.DB_SYNCHRONIZE === 'true';
+const dbMigrationsRun = process.env.DB_MIGRATIONS_RUN !== 'false';
 
 @Module({
   imports: [
@@ -23,7 +27,9 @@ import { appConfig, dbConfig, redisConfig, validate } from './config';
       type: 'postgres',
       url: process.env.DATABASE_URL || 'postgresql://campuscast:campuscast@localhost:5432/auth_db',
       entities: [User, Role, UserZoneAssignment],
-      synchronize: process.env.NODE_ENV === 'development',
+      migrations: [Init1700000000000],
+      migrationsRun: dbMigrationsRun,
+      synchronize: dbSynchronize,
       logging: process.env.NODE_ENV === 'development',
     }),
     AuthModule,

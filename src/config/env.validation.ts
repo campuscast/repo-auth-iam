@@ -50,6 +50,26 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   AUTH_BOOTSTRAP_ROOT_RESET_PASSWORD?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ADMIN_ENABLED?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ADMIN_EMAIL?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ADMIN_PASSWORD?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ADMIN_ROLE?: string;
+
+  @IsString()
+  @IsOptional()
+  AUTH_BOOTSTRAP_ADMIN_RESET_PASSWORD?: string;
 }
 
 export function validate(config: Record<string, unknown>) {

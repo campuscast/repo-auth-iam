@@ -15,19 +15,53 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    const enabled = this.parseBoolean(process.env.AUTH_BOOTSTRAP_ROOT_ENABLED, true);
+    const enabled = this.parseBoolean(
+      process.env.AUTH_BOOTSTRAP_ROOT_ENABLED ?? process.env.AUTH_BOOTSTRAP_ADMIN_ENABLED,
+      false,
+    );
     if (!enabled) {
-      this.logger.log('Root bootstrap is disabled');
+      this.logger.log('Bootstrap admin on startup is disabled');
       return;
     }
 
-    const rootLogin = (process.env.AUTH_BOOTSTRAP_ROOT_EMAIL || 'root').trim();
-    const rootPassword = process.env.AUTH_BOOTSTRAP_ROOT_PASSWORD || 'admin';
-    const rootRole = (process.env.AUTH_BOOTSTRAP_ROOT_ROLE || 'admin').trim();
-    const resetPassword = this.parseBoolean(process.env.AUTH_BOOTSTRAP_ROOT_RESET_PASSWORD, false);
+    const rootLogin = (
+      process.env.AUTH_BOOTSTRAP_ROOT_EMAIL ??
+      process.env.AUTH_BOOTSTRAP_ADMIN_EMAIL ??
+      ''
+    ).trim();
+    const rootPassword =
+      process.env.AUTH_BOOTSTRAP_ROOT_PASSWORD ??
+      process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD ??
+      '';
+    const rootRole = (
+      process.env.AUTH_BOOTSTRAP_ROOT_ROLE ??
+      process.env.AUTH_BOOTSTRAP_ADMIN_ROLE ??
+      'admin'
+    ).trim();
+    const resetPassword = this.parseBoolean(
+      process.env.AUTH_BOOTSTRAP_ROOT_RESET_PASSWORD ??
+        process.env.AUTH_BOOTSTRAP_ADMIN_RESET_PASSWORD,
+      false,
+    );
 
-    if (!rootLogin || !rootPassword || !rootRole) {
-      throw new Error('AUTH_BOOTSTRAP_ROOT_* variables must be non-empty');
+    if (!rootLogin || !rootPassword) {
+      this.logger.error(
+        'AUTH_BOOTSTRAP_ADMIN_EMAIL and AUTH_BOOTSTRAP_ADMIN_PASSWORD must be non-empty when startup bootstrap is enabled. ' +
+          'Skipping admin bootstrap.',
+      );
+      return;
+    }
+
+    if (rootLogin === 'root' && rootPassword === 'admin') {
+      this.logger.error(
+        'Insecure default credentials (root/admin) are not allowed. ' +
+          'Set AUTH_BOOTSTRAP_ADMIN_EMAIL and AUTH_BOOTSTRAP_ADMIN_PASSWORD to secure values.',
+      );
+      return;
+    }
+
+    if (!rootRole) {
+      throw new Error('AUTH_BOOTSTRAP_ROOT_ROLE must be non-empty');
     }
 
     let role = await this.roleRepo.findOne({ where: { name: rootRole } });
@@ -37,7 +71,7 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
         permissions: ['*'],
       });
       role = await this.roleRepo.save(role);
-      this.logger.log(`Created bootstrap role "${rootRole}"`);
+      this.logger.log(`Created bootstrap admin role "${rootRole}"`);
     }
 
     const user = await this.userRepo.findOne({
@@ -54,7 +88,7 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
         roles: [role],
       });
       await this.userRepo.save(created);
-      this.logger.warn(`Bootstrap root user created: "${rootLogin}". Change password after first login.`);
+      this.logger.warn(`Bootstrap admin user created: "${rootLogin}". Change password after first login.`);
       return;
     }
 
@@ -73,11 +107,11 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
 
     if (changed) {
       await this.userRepo.save(user);
-      this.logger.warn(`Bootstrap root user updated: "${rootLogin}"`);
+      this.logger.warn(`Bootstrap admin user updated: "${rootLogin}"`);
       return;
     }
 
-    this.logger.log(`Bootstrap root user already exists: "${rootLogin}"`);
+    this.logger.log(`Bootstrap admin user already exists: "${rootLogin}"`);
   }
 
   private parseBoolean(value: string | undefined, defaultValue: boolean): boolean {

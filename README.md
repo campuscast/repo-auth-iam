@@ -13,12 +13,21 @@ Auth & IAM — JWT/OIDC, RBAC/ABAC, MFA, device credentials
 - Health:         GET /health
 - Metrics:         GET /metrics
 
-## Bootstrap Root User
+## Bootstrap First Admin
 
-On startup, service can bootstrap a root account (idempotent):
+Recommended install-time flow:
 
-- `AUTH_BOOTSTRAP_ROOT_ENABLED` (default: `true`)
-- `AUTH_BOOTSTRAP_ROOT_EMAIL` (default: `root`)
-- `AUTH_BOOTSTRAP_ROOT_PASSWORD` (default: `admin`)
+```bash
+npm run build
+AUTH_BOOTSTRAP_ADMIN_EMAIL=admin@example.com \
+AUTH_BOOTSTRAP_ADMIN_PASSWORD='replace-with-strong-password' \
+npm run bootstrap:admin
+```
+
+Optional startup bootstrap (explicit opt-in, idempotent):
+
+- `AUTH_BOOTSTRAP_ROOT_ENABLED` (default: `false`)
+- `AUTH_BOOTSTRAP_ROOT_EMAIL` (required when enabled)
+- `AUTH_BOOTSTRAP_ROOT_PASSWORD` (required when enabled)
 - `AUTH_BOOTSTRAP_ROOT_ROLE` (default: `admin`)
 - `AUTH_BOOTSTRAP_ROOT_RESET_PASSWORD` (default: `false`)
