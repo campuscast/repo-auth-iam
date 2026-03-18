@@ -2,24 +2,17 @@ import { BadRequestException } from '@nestjs/common';
 import { assertPasswordPolicy, validatePasswordPolicy } from '../src/auth/password-policy';
 
 describe('Password policy', () => {
-  it('accepts a strong password', () => {
-    expect(validatePasswordPolicy('StrongPass123!')).toEqual([]);
-    expect(() => assertPasswordPolicy('StrongPass123!')).not.toThrow();
+  it('accepts an 8-char password', () => {
+    expect(validatePasswordPolicy('12345678')).toEqual([]);
+    expect(() => assertPasswordPolicy('12345678')).not.toThrow();
   });
 
-  it('returns all required issues for weak password', () => {
+  it('returns min-length issue for short password', () => {
     const issues = validatePasswordPolicy('weak');
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('at least'),
-        expect.stringContaining('uppercase'),
-        expect.stringContaining('digit'),
-        expect.stringContaining('special'),
-      ]),
-    );
+    expect(issues).toEqual(expect.arrayContaining([expect.stringContaining('at least')]));
   });
 
   it('throws BadRequestException when assertion fails', () => {
-    expect(() => assertPasswordPolicy('PasswordOnly')).toThrow(BadRequestException);
+    expect(() => assertPasswordPolicy('short')).toThrow(BadRequestException);
   });
 });

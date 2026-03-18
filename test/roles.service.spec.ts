@@ -49,6 +49,7 @@ describe('RolesService', () => {
       findOne: jest.fn(),
       create: jest.fn((data: any) => ({ ...mockRole(), ...data })),
       save: jest.fn((role: any) => Promise.resolve({ ...mockRole(), ...role })),
+      remove: jest.fn((role: any) => Promise.resolve(role)),
     };
 
     userRepo = {
@@ -158,6 +159,15 @@ describe('RolesService', () => {
         service.assignRoleToUser('missing', 'role-1', 'actor-1'),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('should forbid modifying roles for super_admin user', async () => {
+      userRepo.findOne.mockResolvedValue(
+        mockUser({ roles: [mockRole({ name: 'super_admin', permissions: ['*'] })] }),
+      );
+      await expect(
+        service.assignRoleToUser('user-1', 'role-2', 'actor-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
   });
 
   describe('removeRoleFromUser', () => {
@@ -178,6 +188,26 @@ describe('RolesService', () => {
       qb.getCount.mockResolvedValue(1);
       await expect(
         service.removeRoleFromUser('user-1', 'role-a', 'actor-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('remove', () => {
+    it('should allow admin to delete non-system role', async () => {
+      userRepo.findOne.mockResolvedValueOnce(
+        mockUser({ roles: [mockRole({ name: 'admin', permissions: ['*'] })] }),
+      );
+      roleRepo.findOne.mockResolvedValueOnce(mockRole({ id: 'role-2', name: 'editor' }));
+
+      const result = await service.remove('role-2', 'actor-1');
+      expect(result).toEqual({ deleted: true });
+      expect(roleRepo.remove).toHaveBeenCalled();
+    });
+
+    it('should reject role deletion for non-admin actor', async () => {
+      userRepo.findOne.mockResolvedValueOnce(mockUser({ roles: [mockRole({ name: 'viewer' })] }));
+      await expect(
+        service.remove('role-2', 'actor-1'),
       ).rejects.toThrow(ForbiddenException);
     });
   });

@@ -1,6 +1,6 @@
 import {
   Controller, Post, Body, Param, UseGuards, BadRequestException,
-  NotFoundException, UnauthorizedException,
+  NotFoundException, UnauthorizedException, ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -23,21 +23,31 @@ export class PasswordController {
     this.auditClient = new AuditClient();
   }
 
+  private isSuperAdminUser(user: User): boolean {
+    return (user.roles || []).some((role) => role.name === 'super_admin');
+  }
+
   @Post('me/change-password')
   async changeOwnPassword(
-    @Body() body: { current_password: string; new_password: string },
+    @Body() body: { current_password?: string; new_password?: string },
     @CurrentUser() actor: { sub: string },
   ) {
-    if (!body.current_password || !body.new_password) {
-      throw new BadRequestException('Both current_password and new_password are required');
+    if (!body?.new_password) {
+      throw new BadRequestException('new_password is required');
     }
     assertPasswordPolicy(body.new_password, 'New password');
 
     const user = await this.userRepo.findOne({ where: { id: actor.sub } });
     if (!user) throw new UnauthorizedException('User not found');
 
-    const valid = await bcrypt.compare(body.current_password, user.password_hash);
-    if (!valid) throw new UnauthorizedException('Current password is incorrect');
+    if (!user.must_change_password) {
+      if (!body.current_password) {
+        throw new BadRequestException('current_password is required');
+      }
+
+      const valid = await bcrypt.compare(body.current_password, user.password_hash);
+      if (!valid) throw new UnauthorizedException('Current password is incorrect');
+    }
 
     user.password_hash = await bcrypt.hash(body.new_password, 10);
     user.must_change_password = false;
@@ -63,8 +73,11 @@ export class PasswordController {
     @Body() body: { temporary_password?: string },
     @CurrentUser() actor: { sub: string },
   ) {
-    const user = await this.userRepo.findOne({ where: { id: userId } });
+    const user = await this.userRepo.findOne({ where: { id: userId }, relations: ['roles'] });
     if (!user) throw new NotFoundException('User not found');
+    if (this.isSuperAdminUser(user)) {
+      throw new ForbiddenException('Cannot reset password for super_admin user via users management');
+    }
 
     const tempPassword = body.temporary_password || crypto.randomBytes(12).toString('base64url');
     assertPasswordPolicy(tempPassword, 'Temporary password');

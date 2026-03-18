@@ -58,4 +58,17 @@ export class UsersController {
   async deactivate(@Param('id') id: string, @CurrentUser() actor: { sub: string }) {
     return this.usersService.deactivate(id, actor.sub);
   }
+
+  @Post(':id/restore')
+  @RequirePermissions('users.write')
+  async restore(@Param('id') id: string, @CurrentUser() actor: { sub: string }) {
+    return this.usersService.restore(id, actor.sub);
+  }
+
+  @Delete(':id/permanent')
+  @HttpCode(200)
+  @RequirePermissions('users.write')
+  async removePermanently(@Param('id') id: string, @CurrentUser() actor: { sub: string }) {
+    return this.usersService.removePermanently(id, actor.sub);
+  }
 }

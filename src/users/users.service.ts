@@ -1,7 +1,9 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
+import { Repository } from 'typeorm';
+import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { RedisService } from '@campuscast/shared-libs';
 import { User } from './user.entity';
 import { Role } from '../roles/role.entity';
 import { UserZoneAssignment } from './user-zone-assignment.entity';
@@ -11,7 +13,7 @@ import { assertPasswordPolicy } from '../auth/password-policy';
 export interface CreateUserDto {
   email: string;
   name?: string;
-  password: string;
+  password?: string;
   role_ids?: string[];
   zone_ids?: string[];
 }
@@ -26,14 +28,101 @@ export interface UpdateUserDto {
 
 @Injectable()
 export class UsersService {
+  private static readonly MAX_LOGIN_LENGTH = 20;
+  private static readonly MAX_NAME_LENGTH = 20;
+  private static readonly ONLINE_KEY_PREFIX = 'auth:online:user:';
+  private static readonly REVOKED_KEY_PREFIX = 'auth:revoked:user:';
   private readonly auditClient: AuditClient;
 
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Role) private readonly roleRepo: Repository<Role>,
     @InjectRepository(UserZoneAssignment) private readonly uzaRepo: Repository<UserZoneAssignment>,
+    private readonly redisService: RedisService,
   ) {
     this.auditClient = new AuditClient();
+  }
+
+  private normalizeLogin(raw: string): string {
+    const login = String(raw || '').trim();
+    if (!login) throw new BadRequestException('Login is required');
+    if (login.length > UsersService.MAX_LOGIN_LENGTH) {
+      throw new BadRequestException(`Login must be at most ${UsersService.MAX_LOGIN_LENGTH} characters`);
+    }
+    return login;
+  }
+
+  private normalizeName(raw?: string): string | undefined {
+    if (raw === undefined) return undefined;
+    const name = String(raw || '').trim();
+    if (!name) return '';
+    if (name.length > UsersService.MAX_NAME_LENGTH) {
+      throw new BadRequestException(`Name must be at most ${UsersService.MAX_NAME_LENGTH} characters`);
+    }
+    return name;
+  }
+
+  private generateTemporaryPassword(): string {
+    return randomBytes(12).toString('base64url');
+  }
+
+  private onlineKey(userId: string): string {
+    return `${UsersService.ONLINE_KEY_PREFIX}${userId}`;
+  }
+
+  private revokedKey(userId: string): string {
+    return `${UsersService.REVOKED_KEY_PREFIX}${userId}`;
+  }
+
+  private async markRevoked(userId: string) {
+    try {
+      await this.redisService.client.set(this.revokedKey(userId), '1');
+    } catch {
+      // Session revocation cache is best-effort.
+    }
+  }
+
+  private async clearRevoked(userId: string) {
+    try {
+      await this.redisService.client.del(this.revokedKey(userId));
+    } catch {
+      // Session revocation cache cleanup is best-effort.
+    }
+  }
+
+  private async clearOnline(userId: string) {
+    try {
+      await this.redisService.client.del(this.onlineKey(userId));
+    } catch {
+      // Presence cache cleanup is best-effort.
+    }
+  }
+
+  private async resolveOnlineMap(userIds: string[]): Promise<Record<string, boolean>> {
+    if (!userIds.length) return {};
+    try {
+      const keys = userIds.map((id) => this.onlineKey(id));
+      const values = await this.redisService.client.mget(keys);
+      return userIds.reduce<Record<string, boolean>>((acc, id, index) => {
+        acc[id] = Boolean(values[index]);
+        return acc;
+      }, {});
+    } catch {
+      return userIds.reduce<Record<string, boolean>>((acc, id) => {
+        acc[id] = false;
+        return acc;
+      }, {});
+    }
+  }
+
+  private isSuperAdminUser(user: User): boolean {
+    return (user.roles || []).some((role) => role.name === 'super_admin');
+  }
+
+  private assertNotSuperAdminTarget(user: User) {
+    if (this.isSuperAdminUser(user)) {
+      throw new ForbiddenException('Cannot modify super_admin user via users management');
+    }
   }
 
   async list(params: {
@@ -65,9 +154,10 @@ export class UsersService {
     qb.take(params.page_size);
 
     const [users, total] = await qb.getManyAndCount();
+    const onlineMap = await this.resolveOnlineMap(users.map((user) => user.id));
 
     return {
-      data: users.map(u => this.toDto(u)),
+      data: users.map((u) => this.toDto(u, u.status === 'active' && Boolean(onlineMap[u.id]))),
       pagination: { total, page: params.page, page_size: params.page_size },
     };
   }
@@ -77,21 +167,24 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
 
     const zones = await this.uzaRepo.find({ where: { user_id: id } });
+    const onlineMap = await this.resolveOnlineMap([id]);
 
     return {
-      ...this.toDto(user),
+      ...this.toDto(user, user.status === 'active' && Boolean(onlineMap[id])),
       zones: zones.map(z => ({ zone_id: z.zone_id, role: z.role })),
     };
   }
 
   async create(dto: CreateUserDto, actorId: string) {
-    if (!dto.email?.trim()) throw new BadRequestException('Email is required');
-    assertPasswordPolicy(dto.password, 'Password');
+    const login = this.normalizeLogin(dto.email);
+    const normalizedName = this.normalizeName(dto.name);
+    const temporaryPassword = dto.password ? String(dto.password) : this.generateTemporaryPassword();
+    assertPasswordPolicy(temporaryPassword, 'Password');
 
-    const existing = await this.userRepo.findOne({ where: { email: dto.email.trim() } });
+    const existing = await this.userRepo.findOne({ where: { email: login } });
     if (existing) throw new BadRequestException('User with this email already exists');
 
-    const password_hash = await bcrypt.hash(dto.password, 10);
+    const password_hash = await bcrypt.hash(temporaryPassword, 10);
 
     let roles: Role[] = [];
     if (dto.role_ids?.length) {
@@ -102,8 +195,8 @@ export class UsersService {
     }
 
     const user = this.userRepo.create({
-      email: dto.email.trim(),
-      name: dto.name?.trim() || undefined,
+      email: login,
+      name: normalizedName || undefined,
       password_hash,
       status: 'active',
       must_change_password: true,
@@ -132,24 +225,32 @@ export class UsersService {
       detail: { email: saved.email, roles: roles.map(r => r.name) },
     });
 
-    return this.toDto(saved);
+    await this.clearRevoked(saved.id);
+    await this.clearOnline(saved.id);
+
+    return {
+      ...this.toDto(saved, false),
+      temporary_password: temporaryPassword,
+    };
   }
 
   async update(id: string, dto: UpdateUserDto, actorId: string) {
     const user = await this.userRepo.findOne({ where: { id }, relations: ['roles'] });
     if (!user) throw new NotFoundException('User not found');
+    this.assertNotSuperAdminTarget(user);
+    const previousStatus = user.status;
 
     if (dto.email !== undefined) {
-      const trimmed = dto.email.trim();
-      if (trimmed !== user.email) {
-        const dup = await this.userRepo.findOne({ where: { email: trimmed } });
+      const login = this.normalizeLogin(dto.email);
+      if (login !== user.email) {
+        const dup = await this.userRepo.findOne({ where: { email: login } });
         if (dup) throw new BadRequestException('Email already in use');
-        user.email = trimmed;
+        user.email = login;
       }
     }
 
     if (dto.name !== undefined) {
-      user.name = dto.name.trim() || '';
+      user.name = this.normalizeName(dto.name) || '';
     }
 
     if (dto.status !== undefined) {
@@ -157,6 +258,9 @@ export class UsersService {
         throw new BadRequestException('Status must be "active" or "inactive"');
       }
       if (dto.status === 'inactive') {
+        if (id === actorId) {
+          throw new ForbiddenException('Cannot deactivate your own account');
+        }
         await this.ensureNotLastAdmin(user);
       }
       user.status = dto.status;
@@ -171,6 +275,15 @@ export class UsersService {
     }
 
     const saved = await this.userRepo.save(user);
+
+    if (previousStatus !== saved.status) {
+      if (saved.status === 'inactive') {
+        await this.markRevoked(saved.id);
+        await this.clearOnline(saved.id);
+      } else {
+        await this.clearRevoked(saved.id);
+      }
+    }
 
     if (dto.zone_ids !== undefined) {
       await this.uzaRepo.delete({ user_id: id });
@@ -193,18 +306,29 @@ export class UsersService {
       detail: { changes: dto },
     });
 
-    return this.toDto(saved);
+    const onlineMap = await this.resolveOnlineMap([saved.id]);
+    return this.toDto(saved, onlineMap[saved.id] ?? false);
   }
 
   async deactivate(id: string, actorId: string) {
+    if (id === actorId) {
+      throw new ForbiddenException('Cannot deactivate your own account');
+    }
+
     const user = await this.userRepo.findOne({ where: { id }, relations: ['roles'] });
     if (!user) throw new NotFoundException('User not found');
-    if (user.status === 'inactive') return this.toDto(user);
+    this.assertNotSuperAdminTarget(user);
+    if (user.status === 'inactive') {
+      const onlineMap = await this.resolveOnlineMap([user.id]);
+      return this.toDto(user, onlineMap[user.id] ?? false);
+    }
 
     await this.ensureNotLastAdmin(user);
 
     user.status = 'inactive';
     const saved = await this.userRepo.save(user);
+    await this.markRevoked(saved.id);
+    await this.clearOnline(saved.id);
 
     this.auditClient.append({
       event_type: 'iam.user_deactivated',
@@ -216,7 +340,64 @@ export class UsersService {
       detail: { email: user.email },
     });
 
-    return this.toDto(saved);
+    return this.toDto(saved, false);
+  }
+
+  async restore(id: string, actorId: string) {
+    const user = await this.userRepo.findOne({ where: { id }, relations: ['roles'] });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.status === 'active') {
+      const onlineMap = await this.resolveOnlineMap([user.id]);
+      return this.toDto(user, onlineMap[user.id] ?? false);
+    }
+
+    user.status = 'active';
+    const saved = await this.userRepo.save(user);
+    await this.clearRevoked(saved.id);
+
+    this.auditClient.append({
+      event_type: 'iam.user_restored',
+      actor_type: 'user',
+      actor_id: actorId,
+      resource_type: 'user',
+      resource_id: id,
+      action: 'restore',
+      detail: { email: user.email },
+    });
+
+    const onlineMap = await this.resolveOnlineMap([saved.id]);
+    return this.toDto(saved, onlineMap[saved.id] ?? false);
+  }
+
+  async removePermanently(id: string, actorId: string) {
+    if (id === actorId) {
+      throw new ForbiddenException('Cannot delete your own account');
+    }
+
+    const user = await this.userRepo.findOne({ where: { id }, relations: ['roles'] });
+    if (!user) throw new NotFoundException('User not found');
+    this.assertNotSuperAdminTarget(user);
+
+    if (user.status === 'active') {
+      await this.ensureNotLastAdmin(user);
+    }
+
+    await this.uzaRepo.delete({ user_id: id });
+    await this.userRepo.remove(user);
+    await this.markRevoked(id);
+    await this.clearOnline(id);
+
+    this.auditClient.append({
+      event_type: 'iam.user_deleted',
+      actor_type: 'user',
+      actor_id: actorId,
+      resource_type: 'user',
+      resource_id: id,
+      action: 'delete',
+      detail: { email: user.email },
+    });
+
+    return { deleted: true };
   }
 
   private async ensureNotLastAdmin(user: User) {
@@ -236,12 +417,13 @@ export class UsersService {
     }
   }
 
-  private toDto(user: User) {
+  private toDto(user: User, online = false) {
     return {
       id: user.id,
       email: user.email,
       name: user.name || user.email,
       status: user.status,
+      online,
       must_change_password: user.must_change_password,
       roles: (user.roles || []).map(r => ({ id: r.id, name: r.name })),
       created_at: user.created_at?.toISOString(),

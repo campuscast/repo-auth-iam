@@ -9,6 +9,8 @@ import { Init1700000000000 } from '../migrations/1700000000000-Init';
 import { IamExtensions1700000000001 } from '../migrations/1700000000001-IamExtensions';
 import { validatePasswordPolicy, MIN_PASSWORD_LENGTH } from '../auth/password-policy';
 
+const BOOTSTRAP_ADMIN_ROLE = 'super_admin';
+
 const dataSource = new DataSource({
   type: 'postgres',
   url:
@@ -34,10 +36,29 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function assertLoginLike(value: string, fieldName: string): void {
+  if (!value.trim()) {
+    throw new Error(`${fieldName} must be non-empty`);
+  }
+  if (/\s/.test(value)) {
+    throw new Error(`${fieldName} must not contain whitespace`);
+  }
+}
+
 async function seedDefaultRoles(roleRepo: ReturnType<DataSource['getRepository']>) {
   const defaults = [
     { name: 'super_admin', permissions: ['*'] },
     { name: 'admin', permissions: ['*'] },
+    {
+      name: 'editor',
+      permissions: [
+        'schedules.read', 'schedules.write', 'schedules.publish',
+        'devices.read',
+        'content.read', 'content.write',
+        'audit.read',
+        'zones.read',
+      ],
+    },
     {
       name: 'operator',
       permissions: [
@@ -69,25 +90,25 @@ async function seedDefaultRoles(roleRepo: ReturnType<DataSource['getRepository']
 async function main() {
   const adminEmail = requireEnv('AUTH_BOOTSTRAP_ADMIN_EMAIL');
   const adminPassword = requireEnv('AUTH_BOOTSTRAP_ADMIN_PASSWORD');
-  const adminRole = (process.env.AUTH_BOOTSTRAP_ADMIN_ROLE || 'admin').trim();
+  const requestedRole = (process.env.AUTH_BOOTSTRAP_ADMIN_ROLE || '').trim();
+  const adminRole = BOOTSTRAP_ADMIN_ROLE;
   const resetPassword = parseBoolean(
     process.env.AUTH_BOOTSTRAP_ADMIN_RESET_PASSWORD,
     false,
   );
 
-  if (!adminRole) {
-    throw new Error('AUTH_BOOTSTRAP_ADMIN_ROLE must be non-empty');
+  if (requestedRole && requestedRole !== adminRole) {
+    console.log(
+      `[bootstrap-admin] AUTH_BOOTSTRAP_ADMIN_ROLE="${requestedRole}" is ignored. Bootstrap role is fixed to "${adminRole}".`,
+    );
   }
-
-  if (adminEmail === 'root' && adminPassword === 'admin') {
-    throw new Error('Insecure credentials root/admin are not allowed for admin bootstrap');
-  }
+  assertLoginLike(adminEmail, 'AUTH_BOOTSTRAP_ADMIN_EMAIL');
 
   const passwordPolicyIssues = validatePasswordPolicy(adminPassword);
   if (passwordPolicyIssues.length > 0) {
-    throw new Error(
-      `Password policy violation for AUTH_BOOTSTRAP_ADMIN_PASSWORD (min length ${MIN_PASSWORD_LENGTH}, uppercase, lowercase, digit, special character required): ` +
-        passwordPolicyIssues.join('; '),
+    console.log(
+      `[bootstrap-admin] AUTH_BOOTSTRAP_ADMIN_PASSWORD does not meet standard password policy (min length ${MIN_PASSWORD_LENGTH}). ` +
+        'Proceeding because bootstrap credentials are explicitly configured.',
     );
   }
 
@@ -143,7 +164,12 @@ async function main() {
     await userRepo.save(created);
 
     // Mark system as initialized
-    if (!initSetting) {
+    if (initSetting) {
+      if (initSetting.value !== 'true') {
+        initSetting.value = 'true';
+        await settingRepo.save(initSetting);
+      }
+    } else {
       await settingRepo.save({ key: 'system.initialized', value: 'true' });
     }
 
@@ -179,7 +205,12 @@ async function main() {
   }
 
   // Ensure initialized flag
-  if (!initSetting) {
+  if (initSetting) {
+    if (initSetting.value !== 'true') {
+      initSetting.value = 'true';
+      await settingRepo.save(initSetting);
+    }
+  } else {
     await settingRepo.save({ key: 'system.initialized', value: 'true' });
   }
 }

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Body, Param, UseGuards,
+  Controller, Get, Post, Put, Delete, Body, Param, HttpCode, UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard, CurrentUser } from '@campuscast/shared-libs';
 import { RolesService } from './roles.service';
@@ -42,6 +42,16 @@ export class RolesController {
     return this.rolesService.update(id, body, actor.sub);
   }
 
+  @Delete(':id')
+  @HttpCode(200)
+  @RequirePermissions('users.write')
+  async removeRole(
+    @Param('id') id: string,
+    @CurrentUser() actor: { sub: string },
+  ) {
+    return this.rolesService.remove(id, actor.sub);
+  }
+
   @Post('assign')
   @RequirePermissions('users.write')
   async assign(
@@ -53,7 +63,7 @@ export class RolesController {
 
   @Post('remove')
   @RequirePermissions('users.write')
-  async remove(
+  async removeFromUser(
     @Body() body: { user_id: string; role_id: string },
     @CurrentUser() actor: { sub: string },
   ) {

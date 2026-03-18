@@ -24,8 +24,8 @@ export class User {
   @Column({ default: false })
   mfa_enabled: boolean;
 
-  @Column({ nullable: true })
-  mfa_secret: string;
+  @Column({ type: 'text', nullable: true })
+  mfa_secret: string | null;
 
   @ManyToMany(() => Role, { eager: true })
   @JoinTable({ name: 'user_roles' })

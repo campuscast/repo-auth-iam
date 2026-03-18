@@ -101,9 +101,37 @@ export class RolesService {
     return this.toDto(saved);
   }
 
+  async remove(id: string, actorId: string) {
+    await this.assertActorCanManageRoleDeletion(actorId);
+
+    const role = await this.roleRepo.findOne({ where: { id } });
+    if (!role) throw new NotFoundException('Role not found');
+
+    if (['super_admin', 'admin'].includes(role.name)) {
+      throw new ForbiddenException('Cannot delete system roles');
+    }
+
+    await this.roleRepo.remove(role);
+
+    this.auditClient.append({
+      event_type: 'iam.role_deleted',
+      actor_type: 'user',
+      actor_id: actorId,
+      resource_type: 'role',
+      resource_id: id,
+      action: 'delete',
+      detail: { name: role.name },
+    });
+
+    return { deleted: true };
+  }
+
   async assignRoleToUser(userId: string, roleId: string, actorId: string) {
     const user = await this.userRepo.findOne({ where: { id: userId }, relations: ['roles'] });
     if (!user) throw new NotFoundException('User not found');
+    if (this.isSuperAdminUser(user)) {
+      throw new ForbiddenException('Cannot modify roles of super_admin user');
+    }
 
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found');
@@ -130,6 +158,9 @@ export class RolesService {
   async removeRoleFromUser(userId: string, roleId: string, actorId: string) {
     const user = await this.userRepo.findOne({ where: { id: userId }, relations: ['roles'] });
     if (!user) throw new NotFoundException('User not found');
+    if (this.isSuperAdminUser(user)) {
+      throw new ForbiddenException('Cannot modify roles of super_admin user');
+    }
 
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found');
@@ -170,5 +201,19 @@ export class RolesService {
       name: role.name,
       permissions: role.permissions || [],
     };
+  }
+
+  private isSuperAdminUser(user: User): boolean {
+    return (user.roles || []).some((role) => role.name === 'super_admin');
+  }
+
+  private async assertActorCanManageRoleDeletion(actorId: string) {
+    const actor = await this.userRepo.findOne({ where: { id: actorId }, relations: ['roles'] });
+    if (!actor) throw new ForbiddenException('Actor not found');
+
+    const roleNames = new Set((actor.roles || []).map((role) => role.name));
+    if (!roleNames.has('admin') && !roleNames.has('super_admin')) {
+      throw new ForbiddenException('Only admin or super_admin can delete roles');
+    }
   }
 }

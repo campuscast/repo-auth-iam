@@ -1,4 +1,5 @@
-import { Controller, Post, Get, Body, HttpCode, Headers, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Get, Body, HttpCode, Headers, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { CurrentUser, JwtAuthGuard } from '@campuscast/shared-libs';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
@@ -9,6 +10,12 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body() body: { email: string; password: string }) {
     return this.authService.login(body.email, body.password);
+  }
+
+  @Post('mfa/login-verify')
+  @HttpCode(200)
+  async verifyMfaLogin(@Body() body: { mfa_token: string; code: string }) {
+    return this.authService.verifyMfaLogin(body.mfa_token, body.code);
   }
 
   @Post('refresh')
@@ -37,6 +44,39 @@ export class AuthController {
     if (!userId) throw new UnauthorizedException('Invalid token claims');
 
     return this.authService.getMe(userId);
+  }
+
+  @Get('mfa/status')
+  @UseGuards(JwtAuthGuard)
+  async mfaStatus(@CurrentUser() user: { sub: string }) {
+    return this.authService.getMfaStatus(user.sub);
+  }
+
+  @Post('mfa/setup')
+  @UseGuards(JwtAuthGuard)
+  async mfaSetup(@CurrentUser() user: { sub: string }) {
+    return this.authService.initiateMfaSetup(user.sub);
+  }
+
+  @Post('mfa/verify')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  async mfaVerify(@CurrentUser() user: { sub: string }, @Body() body: { code: string }) {
+    return this.authService.verifyMfaCode(user.sub, body.code);
+  }
+
+  @Post('mfa/enable')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  async mfaEnable(@CurrentUser() user: { sub: string }, @Body() body: { code: string }) {
+    return this.authService.enableMfa(user.sub, body.code);
+  }
+
+  @Post('mfa/disable')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  async mfaDisable(@CurrentUser() user: { sub: string }, @Body() body: { password: string }) {
+    return this.authService.disableMfa(user.sub, body.password);
   }
 
   @Post('logout')

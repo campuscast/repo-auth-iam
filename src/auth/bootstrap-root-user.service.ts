@@ -10,6 +10,7 @@ import { validatePasswordPolicy, MIN_PASSWORD_LENGTH } from './password-policy';
 @Injectable()
 export class BootstrapRootUserService implements OnApplicationBootstrap {
   private readonly logger = new Logger(BootstrapRootUserService.name);
+  private readonly bootstrapRole = 'super_admin';
 
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
@@ -39,11 +40,12 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
       process.env.AUTH_BOOTSTRAP_ROOT_PASSWORD ??
       process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD ??
       '';
-    const rootRole = (
+    const requestedRole = (
       process.env.AUTH_BOOTSTRAP_ROOT_ROLE ??
       process.env.AUTH_BOOTSTRAP_ADMIN_ROLE ??
-      'admin'
+      ''
     ).trim();
+    const rootRole = this.bootstrapRole;
     const resetPassword = this.parseBoolean(
       process.env.AUTH_BOOTSTRAP_ROOT_RESET_PASSWORD ??
         process.env.AUTH_BOOTSTRAP_ADMIN_RESET_PASSWORD,
@@ -58,25 +60,26 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
       return;
     }
 
-    if (rootLogin === 'root' && rootPassword === 'admin') {
+    if (!this.isLoginLike(rootLogin)) {
       this.logger.error(
-        'Insecure default credentials (root/admin) are not allowed. ' +
-          'Set AUTH_BOOTSTRAP_ADMIN_EMAIL and AUTH_BOOTSTRAP_ADMIN_PASSWORD to secure values.',
+        'AUTH_BOOTSTRAP_ADMIN_EMAIL must be a non-empty login without spaces when startup bootstrap is enabled. ' +
+          'Skipping admin bootstrap.',
       );
       return;
+    }
+
+    if (requestedRole && requestedRole !== rootRole) {
+      this.logger.warn(
+        `AUTH_BOOTSTRAP_ROOT_ROLE="${requestedRole}" is ignored. Bootstrap role is fixed to "${rootRole}".`,
+      );
     }
 
     const policyIssues = validatePasswordPolicy(rootPassword);
     if (policyIssues.length > 0) {
-      this.logger.error(
-        `Bootstrap admin password does not meet password policy (min length ${MIN_PASSWORD_LENGTH}, uppercase, lowercase, digit, special character required). ` +
-          `Issues: ${policyIssues.join('; ')}`,
+      this.logger.warn(
+        `Bootstrap admin password does not meet standard password policy (min length ${MIN_PASSWORD_LENGTH}). ` +
+          'Proceeding because bootstrap credentials are explicitly configured.',
       );
-      return;
-    }
-
-    if (!rootRole) {
-      throw new Error('AUTH_BOOTSTRAP_ROOT_ROLE must be non-empty');
     }
 
     let role = await this.roleRepo.findOne({ where: { name: rootRole } });
@@ -93,6 +96,15 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
       where: { email: rootLogin },
       relations: ['roles'],
     });
+
+    const initSetting = await this.settingRepo.findOne({ where: { key: 'system.initialized' } });
+    if (!user && initSetting?.value === 'true') {
+      this.logger.warn(
+        'Startup bootstrap skipped: system is already initialized and bootstrap user is absent. ' +
+          'Use install-time bootstrap CLI to provision admins intentionally.',
+      );
+      return;
+    }
 
     if (!user) {
       const password_hash = await bcrypt.hash(rootPassword, 10);
@@ -121,6 +133,7 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
 
     if (resetPassword) {
       user.password_hash = await bcrypt.hash(rootPassword, 10);
+      user.must_change_password = true;
       changed = true;
     }
 
@@ -139,6 +152,12 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
     const existing = await this.settingRepo.findOne({ where: { key } });
     if (!existing) {
       await this.settingRepo.save({ key, value: 'true' });
+      return;
+    }
+
+    if (existing.value !== 'true') {
+      existing.value = 'true';
+      await this.settingRepo.save(existing);
     }
   }
 
@@ -146,6 +165,16 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
     const defaultRoles: { name: string; permissions: string[] }[] = [
       { name: 'super_admin', permissions: ['*'] },
       { name: 'admin', permissions: ['*'] },
+      {
+        name: 'editor',
+        permissions: [
+          'schedules.read', 'schedules.write', 'schedules.publish',
+          'devices.read',
+          'content.read', 'content.write',
+          'audit.read',
+          'zones.read',
+        ],
+      },
       {
         name: 'operator',
         permissions: [
@@ -183,5 +212,9 @@ export class BootstrapRootUserService implements OnApplicationBootstrap {
     if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
     if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
     return defaultValue;
+  }
+
+  private isLoginLike(value: string): boolean {
+    return value.trim().length > 0 && !/\s/.test(value);
   }
 }

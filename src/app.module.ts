@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { MetricsModule } from '@campuscast/shared-libs';
+import { MetricsModule, RedisModule } from '@campuscast/shared-libs';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -40,6 +40,7 @@ const dbMigrationsRun = process.env.DB_MIGRATIONS_RUN !== 'false';
     RolesModule,
     DeviceAuthModule,
     SystemModule,
+    RedisModule,
     MetricsModule,
   ],
   controllers: [HealthController],

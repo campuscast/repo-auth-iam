@@ -5,10 +5,12 @@ import { UsersService } from '../src/users/users.service';
 import { User } from '../src/users/user.entity';
 import { Role } from '../src/roles/role.entity';
 import { UserZoneAssignment } from '../src/users/user-zone-assignment.entity';
+import { RedisService } from '@campuscast/shared-libs';
 
 // Mock AuditClient
 jest.mock('@campuscast/shared-libs', () => ({
   AuditClient: jest.fn().mockImplementation(() => ({ append: jest.fn() })),
+  RedisService: jest.fn(),
 }));
 
 const mockRole = (overrides?: Partial<Role>): Role => ({
@@ -38,6 +40,7 @@ describe('UsersService', () => {
   let userRepo: any;
   let roleRepo: any;
   let uzaRepo: any;
+  let redisService: any;
 
   beforeEach(async () => {
     const qb = {
@@ -57,6 +60,7 @@ describe('UsersService', () => {
       findByIds: jest.fn(),
       create: jest.fn((data: any) => ({ ...mockUser(), ...data })),
       save: jest.fn((user: any) => Promise.resolve({ ...mockUser(), ...user })),
+      remove: jest.fn((user: any) => Promise.resolve(user)),
       createQueryBuilder: jest.fn(() => qb),
     };
 
@@ -72,12 +76,22 @@ describe('UsersService', () => {
       delete: jest.fn(),
     };
 
+    redisService = {
+      client: {
+        set: jest.fn(),
+        del: jest.fn(),
+        mget: jest.fn().mockResolvedValue([]),
+        exists: jest.fn().mockResolvedValue(0),
+      },
+    };
+
     const module = await Test.createTestingModule({
       providers: [
         UsersService,
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(Role), useValue: roleRepo },
         { provide: getRepositoryToken(UserZoneAssignment), useValue: uzaRepo },
+        { provide: RedisService, useValue: redisService },
       ],
     }).compile();
 
@@ -180,9 +194,25 @@ describe('UsersService', () => {
         service.update('user-1', { status: 'banned' }, 'actor-1'),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should forbid updating super_admin user', async () => {
+      userRepo.findOne.mockResolvedValue(
+        mockUser({ roles: [mockRole({ name: 'super_admin', permissions: ['*'] })] }),
+      );
+      await expect(
+        service.update('user-1', { name: 'New Name' }, 'actor-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
   });
 
   describe('deactivate', () => {
+    it('should throw ForbiddenException when user deactivates self', async () => {
+      await expect(
+        service.deactivate('user-1', 'user-1'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(userRepo.findOne).not.toHaveBeenCalled();
+    });
+
     it('should deactivate a non-admin user', async () => {
       userRepo.findOne.mockResolvedValue(mockUser({ roles: [mockRole()] }));
       const result = await service.deactivate('user-1', 'actor-1');
@@ -205,6 +235,26 @@ describe('UsersService', () => {
       const result = await service.deactivate('user-1', 'actor-1');
       expect(result.status).toBe('inactive');
       expect(userRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('should forbid deactivating super_admin user', async () => {
+      userRepo.findOne.mockResolvedValue(
+        mockUser({ roles: [mockRole({ name: 'super_admin', permissions: ['*'] })] }),
+      );
+      await expect(
+        service.deactivate('user-1', 'actor-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('removePermanently', () => {
+    it('should forbid deleting super_admin user', async () => {
+      userRepo.findOne.mockResolvedValue(
+        mockUser({ roles: [mockRole({ name: 'super_admin', permissions: ['*'] })] }),
+      );
+      await expect(
+        service.removePermanently('user-1', 'actor-1'),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });
